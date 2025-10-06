@@ -1,44 +1,105 @@
-name: www.professionalize.com
+name: Professionalize Deploy
+run-name: >-
+  Deploy ${{ inputs.site == 'www'
+    && 'www.professionalize.com'
+    || format('{0}.professionalize.com', inputs.site) }}
+  to ${{ inputs.environment }} by @${{ github.actor }}
+
 on:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Environment'
+        description: "Environment"
         type: environment
         default: staging
         required: true
+      site:
+        description: "Which section to deploy"
+        type: choice
+        options: [www, agents, about]
+        default: www
+        required: true
+
 jobs:
   deploy:
+    # Bind to the selected environment so ${{ vars.* }} resolve from that env
+    environment: ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
+
+    env:
+      SITE: ${{ github.event.inputs.site }}
+
+    concurrency:
+      group: deploy-${{ github.event.inputs.environment }}-${{ github.event.inputs.site }}
+      cancel-in-progress: false
+
     steps:
-    - name: Checkout theme repo
-      uses: actions/checkout@v4
-      with:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
           repository: professionalize/professionalize
           token: ${{ secrets.REPO_TOKEN }}
-          fetch-depth: 0 
+          fetch-depth: 0
           submodules: true
-    - name: Setup Hugo
-      uses: peaceiris/actions-hugo@v2
-      with:
-          hugo-version: '0.135.0'
+
+      - name: Setup Hugo
+        uses: peaceiris/actions-hugo@v2
+        with:
+          hugo-version: "0.135.0"
           extended: true
-    - name: Determine Base URL
-      id: base-url
-      run: |
-        if [ "${{ github.event.inputs.environment }}" = "production" ]; then
-          echo "::set-output name=url::https://www.professionalize.com"
-        else
-          echo "::set-output name=url::https://qa.professionalize.com"
-        fi
-    - name: Build Site
-      run: hugo --config "configs/www.professionalize.com.toml","configs/common.professionalize.com.toml" -b "${{ steps.base-url.outputs.url }}" --cleanDestinationDir --minify --templateMetrics --templateMetricsHints --enableGitInfo
-    - name: Sync to S3
-      run: |
-        aws s3 sync . s3://www-professionalize-com
-      working-directory: public
-      env:
-        AWS_ENDPOINT_URL: https://s3.dynabic.com
-        AWS_DEFAULT_REGION: us-east-1
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Compute target (bucket, base URL, config) from $SITE
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Bucket derived directly from SITE
+          BUCKET="${SITE}-professionalize-com"
+
+          # Prod URL: https://<site>.professionalize.com
+          PROD_URL="https://${SITE}.professionalize.com"
+
+          # Staging URL pattern:
+          #   www   -> https://qa.professionalize.com
+          #   other -> https://qa-<site>.professionalize.com
+          if [[ "$SITE" == "www" ]]; then
+            STAGE_URL="https://qa.professionalize.com"
+          else
+            STAGE_URL="https://qa-${SITE}.professionalize.com"
+          fi
+
+          # Hugo config file per site
+          CONFIG="configs/${SITE}.professionalize.com.toml"
+
+          # Pick base URL by environment
+          if [[ "${{ github.event.inputs.environment }}" == "production" ]]; then
+            BASE_URL="$PROD_URL"
+          else
+            BASE_URL="$STAGE_URL"
+          fi
+
+          echo "bucket=$BUCKET"     >> "$GITHUB_OUTPUT"
+          echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
+          echo "config=$CONFIG"     >> "$GITHUB_OUTPUT"
+
+      - name: Build site
+        run: >
+          hugo
+          --config "${{ steps.target.outputs.config }},configs/common.professionalize.com.toml"
+          -b "${{ steps.target.outputs.base_url }}"
+          --cleanDestinationDir --minify
+          --templateMetrics --templateMetricsHints --enableGitInfo
+
+      # --- S3 sync
+      - name: Sync HTML (no-cache)
+        working-directory: public
+        env:
+          AWS_ENDPOINT_URL:       ${{ vars.AWS_ENDPOINT_URL }}
+          AWS_DEFAULT_REGION:     ${{ vars.AWS_DEFAULT_REGION }}
+          AWS_REGION:             ${{ vars.AWS_DEFAULT_REGION }}   # some tooling reads this one
+          AWS_S3_FORCE_PATH_STYLE: "true"                          # helpful for Ceph; harmless on AWS
+          AWS_ACCESS_KEY_ID:      ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY:  ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws s3 sync . "s3://${{ steps.target.outputs.bucket }}"
