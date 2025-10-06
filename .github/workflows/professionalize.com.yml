@@ -1,4 +1,4 @@
-name: Professionalize Deploy
+name: professionalize.com Deployment
 run-name: >-
   Deploy ${{ inputs.site == 'www'
     && 'www.professionalize.com'
@@ -22,8 +22,7 @@ on:
 
 jobs:
   deploy:
-    # Bind to the selected environment so ${{ vars.* }} resolve from that env
-    environment: ${{ github.event.inputs.environment }}
+    environment: ${{ github.event.inputs.environment }}   # enables ${{ vars.* }} resolution
     runs-on: ubuntu-latest
 
     env:
@@ -92,14 +91,32 @@ jobs:
           --templateMetrics --templateMetricsHints --enableGitInfo
 
       # --- S3 sync
-      - name: Sync HTML (no-cache)
+      - name: Sync website to Ceph S3
         working-directory: public
         env:
           AWS_ENDPOINT_URL:       ${{ vars.AWS_ENDPOINT_URL }}
           AWS_DEFAULT_REGION:     ${{ vars.AWS_DEFAULT_REGION }}
-          AWS_REGION:             ${{ vars.AWS_DEFAULT_REGION }}   # some tooling reads this one
-          AWS_S3_FORCE_PATH_STYLE: "true"                          # helpful for Ceph; harmless on AWS
+          AWS_REGION:             ${{ vars.AWS_DEFAULT_REGION }}
+          AWS_S3_FORCE_PATH_STYLE: "true"  # helpful for Ceph; harmless on AWS
           AWS_ACCESS_KEY_ID:      ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY:  ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           aws s3 sync . "s3://${{ steps.target.outputs.bucket }}"
+
+      # --- Final: Purge Bunny CDN cache for the deployed site
+      - name: Purge Bunny CDN cache
+        if: success()     # only purge if deploy succeeded
+        env:
+          BUNNY_API_KEY: ${{ secrets.BUNNY_API_KEY }}
+          BASE_URL:      ${{ steps.target.outputs.base_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Ensure no trailing slash before appending /*
+          TARGET="${BASE_URL%/}/*"
+          echo "Purging Bunny CDN for: $TARGET"
+          curl -sS -G \
+            -H "X-Api-Key: ${BUNNY_API_KEY}" \
+            --data-urlencode "url=${TARGET}" \
+            "https://api.dynabic.com/bn/purge?async=true" \
+            -D - | sed -n '1,40p'
