@@ -38,7 +38,7 @@ jobs:
         aws s3 sync . s3://www-professionalize-com
       working-directory: public
       env:
-        AWS_ENDPOINT_URL: ${{ vars.AWS_ENDPOINT_URL }}
-        AWS_DEFAULT_REGION: ${{ vars.AWS_DEFAULT_REGION }}
+        AWS_ENDPOINT_URL: https://s3.dynabic.com
+        AWS_DEFAULT_REGION: us-east-1
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
