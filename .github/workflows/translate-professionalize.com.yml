@@ -126,6 +126,7 @@ jobs:
 
       # 8) Commit & push translated content back to THIS repo
       - name: Commit & push translated content (professionalize)
+        working-directory: hugo_content
         run: |
           git config user.name  "Salman Sarfraz"
           git config user.email "kh.salman.sarfraz@gmail.com"
