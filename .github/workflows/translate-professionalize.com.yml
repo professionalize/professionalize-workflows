@@ -121,7 +121,7 @@ jobs:
           git fetch origin
           git pull --strategy=ours origin master || true
           git add .
-          git diff --cached --quiet || git commit -m "Update translation artifacts for ${{ env.WEBSITE }} ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
+          git diff --cached --quiet || git commit -m "Updated ${{ env.LANGS }} translation artifacts for ${{ env.WEBSITE }} ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
           git push origin HEAD:master
 
       # 8) Commit & push translated content back to THIS repo
@@ -133,5 +133,5 @@ jobs:
           git fetch origin
           git pull --strategy=ours origin main || true
           git add .
-          git diff --cached --quiet || git commit -m "Translate ${{ env.WEBSITE }} to local languages ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
+          git diff --cached --quiet || git commit -m "Translated ${{ env.WEBSITE }} to ${{ env.LANGS }} ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
           git push origin HEAD:main
