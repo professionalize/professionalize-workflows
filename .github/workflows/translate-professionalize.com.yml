@@ -3,6 +3,11 @@ name: Translate professionalize.com
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: "Environment"
+        type: environment
+        default: staging
+        required: true
       site:
         description: "Which site to translate"
         type: choice
