@@ -47,9 +47,11 @@ jobs:
       - name: Checkout professionalize repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          submodules: true
+          repository: professionalize/professionalize
+          path: hugo_content
           token: ${{ secrets.REPO_TOKEN }}
+          fetch-depth: 0
+          submodules: true         
 
       # 2) Checkout websiteManager (separate private repo)
       - name: Checkout websiteManager (C# app)
