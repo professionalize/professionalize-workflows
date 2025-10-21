@@ -1,0 +1,151 @@
+name: Translate professionalize.com
+
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "Which site to translate"
+        type: choice
+        options: [www, agents, about]
+        default: www
+        required: true
+      langs:
+        description: "Comma-separated target languages (override default)"
+        type: string
+        default: "ko,fr,nl,de,pt,ru,vi,zh,ja,zh-tw,es,fil,ms,id,tr,it,ar,fa"
+        required: false
+      llm:
+        description: "LLM provider (for websiteManager)"
+        type: choice
+        options: [chatgpt, gpt-oss, gemini]
+        default: chatgpt
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  translate:
+    name: Translate ${{ inputs.site }}.professionalize.com
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      # These will be finalized by the "Compute site variables" step
+      SITE: ${{ inputs.site }}
+      LLM: ${{ inputs.llm }}
+      LANGS: ${{ inputs.langs }}
+      # Paths (relative to repo root)
+      PROFESSIONALIZE_ROOT: .
+      WEBSITE_MANAGER_PATH: website_manager/websiteManager
+
+    steps:
+      # 1) Checkout THIS repository (professionalize/professionalize)
+      - name: Checkout professionalize repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+          token: ${{ secrets.REPO_TOKEN }}
+
+      # 2) Checkout websiteManager (separate private repo)
+      - name: Checkout websiteManager (C# app)
+        uses: actions/checkout@v4
+        with:
+          repository: salmansarfraz/websiteManager
+          path: website_manager
+          token: ${{ secrets.WEBSITE_MANAGER_REPO_TOKEN }}
+          fetch-depth: 0
+
+      # 3) Compute site variables (WEBSITE, HUGO_CONTENT_PATH, optional I18N)
+      - name: Compute site variables
+        id: compute
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "${SITE}" in
+            www)
+              WEBSITE="www.professionalize.com"
+              ;;
+            agents)
+              WEBSITE="agents.professionalize.com"
+              ;;
+            about)
+              WEBSITE="about.professionalize.com"
+              ;;
+            *)
+              echo "Unsupported site: ${SITE}" >&2
+              exit 1
+              ;;
+          esac
+
+          # Content path layout you provided:
+          # hugo_content/content/<site-domain>/en
+          HUGO_CONTENT_PATH="hugo_content/content/${WEBSITE}/en"
+
+          # Theme/i18n can vary by site; leave theme as 'custom' and i18n empty by default.
+          HUGO_THEME="custom"
+          HUGO_I18N_PATH="hugo_content/i18n/en.json"
+
+          # Validate that the source path exists
+          if [ ! -d "${HUGO_CONTENT_PATH}" ]; then
+            echo "❌ Content path not found: ${HUGO_CONTENT_PATH}" >&2
+            exit 2
+          fi
+
+          {
+            echo "WEBSITE=${WEBSITE}"
+            echo "HUGO_CONTENT_PATH=${HUGO_CONTENT_PATH}"
+            echo "HUGO_THEME=${HUGO_THEME}"
+            echo "HUGO_I18N_PATH=${HUGO_I18N_PATH}"
+          } >> "$GITHUB_ENV"
+
+          echo "website=${WEBSITE}"           >> "$GITHUB_OUTPUT"
+          echo "content_path=${HUGO_CONTENT_PATH}" >> "$GITHUB_OUTPUT"
+
+      # 4) Setup .NET 8
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # 5) Build websiteManager
+      - name: Build websiteManager
+        run: dotnet build "$WEBSITE_MANAGER_PATH/websiteManager.csproj" -c Release
+
+      # 6) Run websiteManager (reads env vars to translate files under HUGO_CONTENT_PATH)
+      - name: Run translator
+        env:
+          # Required by your C# app (mirrors your docs workflow contract)
+          WEBSITE:             ${{ env.WEBSITE }}
+          HUGO_THEME:          ${{ env.HUGO_THEME }}
+          LLM:                 ${{ env.LLM }}
+          LANGS:               ${{ env.LANGS }}
+          HUGO_CONTENT_PATH:   ${{ env.HUGO_CONTENT_PATH }}
+          HUGO_I18N_PATH:      ${{ env.HUGO_I18N_PATH }}
+        run: dotnet run --project "$WEBSITE_MANAGER_PATH/websiteManager.csproj" -- github
+
+      # 7) Commit & push any JSON/TXT artifacts back to websiteManager repo (if it produces them)
+      - name: Commit & push changes to websiteManager
+        working-directory: website_manager
+        run: |
+          git config user.name  "Salman Sarfraz"
+          git config user.email "kh.salman.sarfraz@gmail.com"
+          git fetch origin
+          git pull --strategy=ours origin master || true
+          git add .
+          git diff --cached --quiet || git commit -m "Update translation artifacts for ${{ env.WEBSITE }} ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
+          git push origin HEAD:master
+
+      # 8) Commit & push translated content back to THIS repo
+      - name: Commit & push translated content (professionalize)
+        run: |
+          git config user.name  "Salman Sarfraz"
+          git config user.email "kh.salman.sarfraz@gmail.com"
+          git fetch origin
+          # Assume main branch is 'main'; change if different.
+          git pull --strategy=ours origin main || true
+          git add .
+          git diff --cached --quiet || git commit -m "Translate ${SITE}.professionalize.com to local languages ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
+          git push origin HEAD:main
