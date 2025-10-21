@@ -34,7 +34,7 @@ jobs:
   translate:
     name: Translate ${{ inputs.site }}.professionalize.com
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     environment: ${{ inputs.environment }}
 
     env:
