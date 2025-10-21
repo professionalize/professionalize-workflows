@@ -1,4 +1,5 @@
 name: Translate professionalize.com
+run-name: Translate ${{ github.event.inputs.site }}.professionalize.com → ${{ github.event.inputs.langs }}
 
 on:
   workflow_dispatch:
