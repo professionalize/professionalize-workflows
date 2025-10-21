@@ -17,7 +17,7 @@ on:
       langs:
         description: "Comma-separated target languages (override default)"
         type: string
-        default: "ko,fr,nl,de,pt,ru,vi,zh,ja,zh-tw,es,fil,ms,id,tr,it,ar,fa"
+        default: "ko,fr,nl,de,pt,ru,vi,zh,ja,zh-TW,es,fil,ms,id,tr,it,ar,fa"
         required: false
       llm:
         description: "LLM provider (for websiteManager)"
@@ -34,26 +34,19 @@ jobs:
     name: Translate ${{ inputs.site }}.professionalize.com
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    environment: ${{ inputs.environment }}
 
     env:
-      # These will be finalized by the "Compute site variables" step
       SITE: ${{ inputs.site }}
-      WEBSITE: ${SITE}.professionalize.com
-      HUGO_THEME: custom
       LLM: ${{ inputs.llm }}
       LANGS: ${{ inputs.langs }}
-      # Relative paths to Hugo & websiteManager repos paths on the runner      
-      HUGO_CONTENT_PATH: hugo_content/content/${WEBSITE}/en    
-      HUGO_I18N_PATH: hugo_content/i18n/en.json
       WEBSITE_MANAGER_PATH: website_manager/websiteManager
 
     steps:
-      # 1) Checkout THIS repository (professionalize/professionalize)
+      # 1) Checkout THIS repository at the workspace root
       - name: Checkout professionalize repo
         uses: actions/checkout@v4
         with:
-          repository: professionalize/professionalize
-          path: hugo_content
           fetch-depth: 0
           submodules: true
           token: ${{ secrets.REPO_TOKEN }}
@@ -65,7 +58,36 @@ jobs:
           repository: salmansarfraz/websiteManager
           path: website_manager
           token: ${{ secrets.WEBSITE_MANAGER_REPO_TOKEN }}
-          fetch-depth: 0     
+          fetch-depth: 0
+
+      # 3) Compute variables (and validate content path)
+      - name: Compute site variables
+        id: compute
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WEBSITE="${SITE}.professionalize.com"
+          HUGO_CONTENT_PATH="hugo_content/content/${WEBSITE}/en"
+
+          # Theme/i18n — adjust if needed per site
+          HUGO_THEME="custom"
+          HUGO_I18N_PATH="hugo_content/i18n/en.json"
+
+          if [ ! -d "${HUGO_CONTENT_PATH}" ]; then
+            echo "❌ Content path not found: ${HUGO_CONTENT_PATH}" >&2
+            exit 2
+          fi
+
+          {
+            echo "WEBSITE=${WEBSITE}"
+            echo "HUGO_CONTENT_PATH=${HUGO_CONTENT_PATH}"
+            echo "HUGO_THEME=${HUGO_THEME}"
+            echo "HUGO_I18N_PATH=${HUGO_I18N_PATH}"
+          } >> "$GITHUB_ENV"
+
+          echo "website=${WEBSITE}" >> "$GITHUB_OUTPUT"
+          echo "content_path=${HUGO_CONTENT_PATH}" >> "$GITHUB_OUTPUT"
 
       # 4) Setup .NET 8
       - name: Setup .NET
@@ -77,19 +99,18 @@ jobs:
       - name: Build websiteManager
         run: dotnet build "$WEBSITE_MANAGER_PATH/websiteManager.csproj" -c Release
 
-      # 6) Run websiteManager (reads env vars to translate files under HUGO_CONTENT_PATH)
+      # 6) Run translator (uses env from compute step)
       - name: Run translator
         env:
-          # Required by your C# app (mirrors your docs workflow contract)
-          WEBSITE:             ${{ env.WEBSITE }}
-          HUGO_THEME:          ${{ env.HUGO_THEME }}
-          LLM:                 ${{ env.LLM }}
-          LANGS:               ${{ env.LANGS }}
-          HUGO_CONTENT_PATH:   ${{ env.HUGO_CONTENT_PATH }}
-          HUGO_I18N_PATH:      ${{ env.HUGO_I18N_PATH }}
+          WEBSITE:           ${{ env.WEBSITE }}
+          HUGO_THEME:        ${{ env.HUGO_THEME }}
+          LLM:               ${{ env.LLM }}
+          LANGS:             ${{ env.LANGS }}
+          HUGO_CONTENT_PATH: ${{ env.HUGO_CONTENT_PATH }}
+          HUGO_I18N_PATH:    ${{ env.HUGO_I18N_PATH }}
         run: dotnet run --project "$WEBSITE_MANAGER_PATH/websiteManager.csproj" -- github
 
-      # 7) Commit & push any JSON/TXT artifacts back to websiteManager repo (if it produces them)
+      # 7) Commit & push artifacts back to websiteManager (if any)
       - name: Commit & push changes to websiteManager
         working-directory: website_manager
         run: |
@@ -107,8 +128,7 @@ jobs:
           git config user.name  "Salman Sarfraz"
           git config user.email "kh.salman.sarfraz@gmail.com"
           git fetch origin
-          # Assume main branch is 'main'; change if different.
           git pull --strategy=ours origin main || true
           git add .
-          git diff --cached --quiet || git commit -m "Translate ${WEBSITE} to local languages ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
+          git diff --cached --quiet || git commit -m "Translate ${{ env.WEBSITE }} to local languages ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
           git push origin HEAD:main
